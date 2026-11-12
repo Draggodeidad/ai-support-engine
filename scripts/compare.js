@@ -12,7 +12,7 @@ const casesUrl = new URL('../tests/cases.json', import.meta.url);
 const outDir = new URL('../results/', import.meta.url);
 
 const provider = (process.env.LLM_PROVIDER || 'gemini').toLowerCase();
-const delayMs = Number(process.env.COMPARE_DELAY_MS ?? (provider === 'gemini' ? 4000 : 0));
+const delayMs = Number(process.env.COMPARE_DELAY_MS ?? (provider === 'gemini' ? 13000 : 0));
 const requested = process.argv[2];
 if (requested && !MODES.includes(requested)) {
   console.error(`Modo inválido: ${requested}. Usa: ${MODES.join(', ')}`);
@@ -72,19 +72,19 @@ const meta = {
   model: provider === 'ollama' ? process.env.OLLAMA_MODEL : process.env.GEMINI_MODEL,
 };
 await mkdir(outDir, { recursive: true });
-await writeFile(new URL('results.json', outDir), JSON.stringify({ ...meta, summary, rows }, null, 2));
+await writeFile(new URL('comparison.json', outDir), JSON.stringify({ ...meta, summary, rows }, null, 2));
 await writeFile(new URL('results.md', outDir), toMarkdown(rows, summary, meta));
 console.log('\nResumen:', summary);
-console.log('Escrito results/results.json y results/results.md');
+console.log('Escrito results/comparison.json y results/results.md');
 
-async function withRateLimitRetry(fn, retries = 2) {
+async function withRateLimitRetry(fn, retries = 4) {
   for (let i = 0; ; i++) {
     try {
       return await fn();
     } catch (err) {
       if (err.code !== 'LLM_RATE_LIMITED' || i >= retries) throw err;
-      console.warn('  límite de uso alcanzado, esperando 30 s…');
-      await sleep(30000);
+      console.warn('  límite de uso alcanzado, esperando 60 s…');
+      await sleep(60000);
     }
   }
 }
