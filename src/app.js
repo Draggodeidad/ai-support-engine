@@ -1,7 +1,8 @@
 import express from 'express';
-import { AnalyzeRequestSchema, AnalyzeResponseSchema, EngineResultSchema } from './contract.js';
+import { AnalyzeRequestSchema, AnalyzeResponseSchema } from './contract.js';
 import { getEngine as defaultGetEngine } from './engines/index.js';
 import { AppError } from './errors.js';
+import { analyzeMessage } from './pipeline.js';
 
 // getEngine se puede inyectar para tests.
 export function createApp({ getEngine = defaultGetEngine } = {}) {
@@ -19,15 +20,11 @@ export function createApp({ getEngine = defaultGetEngine } = {}) {
       }
       const { message, mode } = parsed.data;
 
-      const raw = await getEngine(mode).analyze(message);
+      // motor -> validación del contrato -> política de seguridad (revisión humana / prioridad mínima)
+      const { result, flags } = await analyzeMessage(message, mode, { getEngine });
+      if (flags.adjusted.length) console.info(`[security] ${mode}: ${flags.adjusted.join(', ')}`);
 
-      // Ningún motor puede romper el contrato de salida.
-      const result = EngineResultSchema.safeParse(raw);
-      if (!result.success) {
-        throw new AppError('ENGINE_INVALID_OUTPUT', 'El motor devolvió un formato inválido', 502);
-      }
-
-      res.json(AnalyzeResponseSchema.parse({ ...result.data, mode }));
+      res.json(AnalyzeResponseSchema.parse(result));
     } catch (err) {
       next(err);
     }
