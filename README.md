@@ -7,7 +7,6 @@ Prototipo de clasificación inteligente de solicitudes de soporte con dos motore
 
 Enunciado completo: [`docs/reto.md`](docs/reto.md) · Reparto del equipo: [`docs/TAREAS.md`](docs/TAREAS.md)
 
-> 🚧 Estado: motor generativo y capa de seguridad listos; motor tradicional en desarrollo (`501` hasta integrarse).
 
 ## Requisitos
 
@@ -116,4 +115,11 @@ results/                   # Evidencias y tabla comparativa
 
 ## Resultados y conclusión
 
-_Pendiente._
+Tabla completa (17 casos, ambos motores): [`results/results.md`](results/results.md) · datos crudos: [`results/comparison.json`](results/comparison.json). Modelo generativo: `gemini-3.5-flash-lite`.
+
+| Motor | Formato válido | Acierto categoría | Acierto prioridad | Acierto total | Tiempo medio |
+|---|---|---|---|---|---|
+| traditional | 100% | 94.1% | 82.4% | 82.4% | 1 ms |
+| generative | 100% | 94.1% | 64.7% | 58.8% | 1153 ms |
+
+**Conclusión.** Ambos motores identificaron la categoría con 94.1% de acierto y siempre devolvieron JSON válido. El tradicional obtuvo mejor acierto total (82.4% vs 58.8%) porque su prioridad sigue reglas explícitas (p. ej. explotación o fuga ⇒ CRITICAL), mientras que el modelo tendió a subestimarla (CRITICAL→HIGH). Esa ventaja tiene un sesgo: las reglas se ajustaron conociendo el dominio del dataset, y fallan ante mensajes que requieren contexto. El generativo redacta respuestas contextualizadas, resistió los intentos de manipulación y no requiere mantener diccionarios, a costa de latencia (~1 s), cuota del proveedor y menor determinismo. La capa de seguridad común garantizó revisión humana en todos los casos de seguridad. Recomendamos un enfoque híbrido: reglas para prioridad y seguridad, LLM para interpretación y respuesta.
