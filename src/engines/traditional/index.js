@@ -1,177 +1,182 @@
-// Motor tradicional por reglas (sin LLM)
-// Clasifica mensajes basado en palabras clave con pesos por categoría
-import { CATEGORIES, PRIORITIES } from '../../contract.js';
+// Motor tradicional por reglas (IA simbólica, SIN modelos generativos).
+// Clasifica por palabras clave con pesos, calcula la prioridad con reglas y devuelve
+// una respuesta predeterminada según la categoría y la prioridad.
+import { PRIORITIES } from '../../contract.js';
 
-// Normaliza texto: minúsculas, eliminando tildes y caracteres especiales
-function normalizeText(text) {
+// Normaliza el texto: minúsculas, sin tildes ni signos de puntuación, espacios simples.
+// Así "Contraseña", "contraseña" y "CONTRASENA" se comparan igual.
+export function normalizeText(text) {
   return text
     .toLowerCase()
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '')
-    .replace(/[^\w\s]/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-// Diccionario de palabras clave con pesos por categoría
-// Pesos más altos indican mayor relevancia para esa categoría
+// Una clave puede ser:
+//  - una RAÍZ (una sola palabra): coincide con cualquier palabra que empiece por ella
+//    ("hack" -> hackeo, hackearon, hackeado; "vulnerab" -> vulnerabilidad, vulnerabilidades).
+//  - una FRASE (con espacios): debe aparecer completa en el texto normalizado.
+// Todas las claves se escriben ya normalizadas (sin tildes ni ñ).
+function matches(normalized, words, key) {
+  if (key.includes(' ')) return ` ${normalized} `.includes(` ${key} `);
+  return words.some((w) => w.startsWith(key));
+}
+
+// Diccionarios por categoría. Peso: 2 = indicio débil/genérico, 3 = indicio claro,
+// 4-5 = indicio casi inequívoco de la categoría.
 const KEYWORDS = {
+  // Problemas para entrar al sistema o a un recurso.
   ACCESS: {
-    // Fallas de acceso y autenticación (sin tildes para comparar con texto normalizado)
-    login: 3, password: 3, contrasena: 3, acceso: 2, credenciales: 2,
-    cuenta: 2, iniciarsesion: 3, 'iniciar sesion': 3, authentication: 2,
-    'no puedo entrar': 4, 'no me deja entrar': 4, bloqueado: 2,
-    'contrasena incorrecta': 3, 'olvide mi contrasena': 3, resetpassword: 2,
-    'no funciona': 5
+    login: 3, logue: 3, 'iniciar sesion': 3, 'inicio de sesion': 3,
+    contrasen: 3, password: 3, credencial: 3, clave: 2,
+    'no puedo entrar': 4, 'no me deja entrar': 4, 'no puedo acceder': 4,
+    acceso: 2, acced: 2, bloquead: 2, autentic: 2, permiso: 2,
+    restablec: 2, 'olvide mi': 3, '2fa': 3, cuenta: 1,
   },
+  // Fallas o comportamiento incorrecto del sistema. Una caída del servicio es una falla
+  // del sistema aunque el síntoma sea "no puedo entrar", por eso pesa más que ACCESS.
   BUG: {
-    // Errores, fallos y comportamientos inesperados
-    error: 3, 'error en': 3, falla: 3, crash: 3, cuelga: 3,
-    'se cuelga': 4, 'no funciona': 3, 'no carga': 3, bug: 3, problema: 3,
-    'comportamiento extraño': 4, 'da error': 3, 'se rompe': 4,
-    'se bloquea': 4, 'falla al': 3, 'no se puede': 3, 'no se permite': 3,
-    'exportar': 2, 'reportes': 2, 'cargando': 2, 'funcion': 2, 'eternamente': 2
+    error: 3, falla: 3, fallo: 3, crash: 3, bug: 3,
+    cuelga: 3, 'se cierra': 3, 'se rompe': 3, 'no responde': 3, 'no carga': 3,
+    'se queda cargando': 3, 'pantalla en blanco': 3, 'no guarda': 3,
+    caido: 4, caida: 4, 'se cayo': 4, 'fuera de linea': 4,
+    lent: 2, 'no funciona': 2, 'no me funciona': 2, problema: 1,
   },
+  // Pedidos de algo nuevo o de una mejora.
   FEATURE: {
-    // Solicitudes de nuevas funciones o mejoras
-    quieres: 2, quieresque: 2, anadir: 2, agregar: 2, mejora: 2,
-    sugerencia: 2, 'me gustaria': 3, 'podrian anadir': 3, feature: 2,
-    'quiero una': 3, 'nueva funcionalidad': 3, 'mejorar el': 2,
-    'faltaria': 2, 'le falta': 2
+    anadir: 3, agregar: 2, 'me gustaria': 3, 'seria genial': 3, 'seria bueno': 3,
+    'estaria bien': 3, sugerencia: 3, sugiero: 3, quisiera: 2, 'quiero que': 2,
+    'podrian': 2, mejora: 2, funcionalidad: 2, 'nueva funcion': 4, implementar: 2,
+    'soporte para': 2, 'opcion de': 2,
   },
+  // Vulnerabilidades e incidentes. Pesos altos: preferimos un falso positivo de
+  // seguridad (lo revisa una persona) antes que dejar pasar un incidente.
   SECURITY: {
-    // Amenazas de seguridad y vulnerabilidades
-    vulnerabilidad: 4, 'ataque en': 4, seguridad: 3, hack: 3,
-    'fuga de': 5, 'datos expuestos': 5, 'explotacion': 5, malware: 5,
-    'codigo malicioso': 5, 'invasion': 4, 'acceso no autorizado': 5,
-    'sistemafuera de linea': 4, 'todo caido': 5, 'caido': 4, 'todos los usuarios': 4
-  }
+    vulnerab: 5, inyeccion: 5, 'sql injection': 5, xss: 5, csrf: 5, exploit: 5,
+    hack: 5, malware: 5, ransomware: 5, virus: 4, phishing: 5, troyano: 5,
+    atacante: 5, ataque: 4, brecha: 5, ddos: 5, 'fuerza bruta': 5,
+    filtracion: 5, 'se filtraron': 5, 'datos filtrados': 5, 'fuga de': 5,
+    'datos expuestos': 5, 'acceso no autorizado': 6, 'sin autorizacion': 4,
+    robaron: 5, 'robo de': 4, comprometid: 4, suplant: 4,
+    'correo sospechoso': 4, 'enlace sospechoso': 4, seguridad: 2,
+  },
 };
 
-// Prioridad base por categoría
-const BASE_PRIORITY = {
-  ACCESS: 'MEDIUM',
-  BUG: 'MEDIUM',
-  FEATURE: 'LOW',
-  SECURITY: 'HIGH'
-};
+// Si SECURITY alcanza este puntaje gana aunque otra categoría sume más: un mensaje que
+// mezcla "sugerencia" con "acceso no autorizado" es un incidente, no una sugerencia.
+const SECURITY_PRECEDENCE_SCORE = 4;
 
-// Modificadores que suben la prioridad
+// Por debajo de este puntaje, o si la segunda categoría queda a 1 punto o menos,
+// la clasificación se considera dudosa y se pide revisión humana.
+const MIN_CONFIDENT_SCORE = 3;
+
+// Prioridad de partida por categoría.
+const BASE_PRIORITY = { ACCESS: 'MEDIUM', BUG: 'MEDIUM', FEATURE: 'LOW', SECURITY: 'HIGH' };
+
+// Modificadores: cada coincidencia suma (o resta) niveles de prioridad.
 const UP_MODIFIERS = {
-  'critico': 1, 'urgente': 1, 'grave': 1,
-  'produccion': 1, 'todos los usuarios': 2, 'caido': 2,
-  'todos caidos': 2, 'fuera de linea': 2, 'todos fuera': 2,
-  'data leak': 2, 'explotacion activa': 3, 'activa': 1, 'fuera de': 2,
-  'se cayo': 2
+  urgente: 1, critico: 1, grave: 1, produccion: 1, pagos: 1,
+  'todos los usuarios': 2, 'ningun usuario': 2, 'perdida de datos': 2,
+  caido: 2, caida: 2, 'se cayo': 2, 'fuera de linea': 2,
 };
-
-// Modificadores que bajan la prioridad
 const DOWN_MODIFIERS = {
-  'cuando puedan': -1, 'sugerencia': -1, 'no es urgente': -1,
-  'relajado': -1, 'cuando tengan tiempo': -1
+  'cuando puedan': -1, 'cuando tengan tiempo': -1, 'no es urgente': -1,
+  'sin prisa': -1, sugerencia: -1, 'detalle menor': -1,
 };
 
-// Respuestas en español por categoría (varían según prioridad)
+// SECURITY sube directo a CRITICAL si hay explotación activa, intrusión o datos comprometidos.
+const SECURITY_CRITICAL = [
+  'exploit', 'explotad', 'inyeccion', 'hack', 'atacante', 'ransomware', 'masiv',
+  'filtracion', 'se filtraron', 'datos filtrados', 'fuga de', 'datos expuestos',
+  'acceso no autorizado', 'sin autorizacion', 'robaron', 'en uso',
+];
+
+// Respuestas predeterminadas. No prometen plazos ni acciones que el sistema no garantiza
+// y nunca piden contraseñas.
 const RESPONSES = {
   ACCESS: {
-    LOW: 'Recuerda verificar tu correo de registro. Si el problema persiste, intenta restablecer la contraseña.',
-    MEDIUM: 'Lamentamos el inconveniente. Verifica tus credenciales y la conexión. Si necesitas ayuda, te guiaremos paso a paso.',
-    HIGH: 'Priorizamos tu acceso. Comparte detalles de tu intento y te ayudaremos inmediatamente.',
-    CRITICAL: 'ACCESO URGENTE: Un experto te contactará en los próximos 15 minutos. Mientras, intenta restablecer tu contraseña.'
+    LOW: 'Gracias por escribirnos. Puede recuperar el acceso con la opción "¿Olvidó su contraseña?" en la pantalla de inicio de sesión.',
+    MEDIUM: 'Lamentamos el inconveniente. Verifique sus credenciales y utilice la recuperación de contraseña si es necesario; si el problema continúa, indíquenos el mensaje de error que aparece.',
+    HIGH: 'Lamentamos el inconveniente. Hemos priorizado su caso de acceso; por favor indíquenos el usuario afectado y el mensaje de error, sin compartir su contraseña.',
+    CRITICAL: 'Hemos detectado un problema de acceso que afecta a varios usuarios y lo escalamos con máxima prioridad. Le informaremos en cuanto haya novedades.',
   },
   BUG: {
-    LOW: 'Gracias por tu reporte. La registraré para análisis futuro.',
-    MEDIUM: 'Registro tu reporte. Necesitamos detalles del paso a paso para reproducirlo.',
-    HIGH: 'Investigando el fallo. Comparte: screenshot, navegador y paso a paso exacto.',
-    CRITICAL: 'FALLO CRÍTICO: Servicio afectado. Un técnico se conectará en 30 min. ¿Hay pérdida de datos?'
+    LOW: 'Gracias por el reporte. Lo registramos para su análisis por el equipo técnico.',
+    MEDIUM: 'Gracias por el reporte. Para reproducir el error, indíquenos los pasos que siguió, el navegador o dispositivo y, si es posible, una captura de pantalla.',
+    HIGH: 'Hemos priorizado su reporte de falla. Indíquenos desde cuándo ocurre, a cuántos usuarios afecta y los pasos para reproducirla.',
+    CRITICAL: 'Hemos escalado la falla con máxima prioridad al equipo técnico. Le mantendremos informado sobre el avance de la solución.',
   },
   FEATURE: {
-    LOW: 'Gracias por tu sugerencia. La añadimos a nuestra lista de mejoras.',
-    MEDIUM: 'Tu idea esvaliosa. La evaluaremos en la próxima reunion de planificación.',
-    HIGH: 'Interesante propuesta. Podemos priorizarla si hay demanda. ¿Te interesa betalearla?',
-    CRITICAL: 'Implementación prioritaria. Haremos una llamada para alinear requerimientos.'
+    LOW: 'Gracias por su sugerencia. La registramos para que el equipo de producto la evalúe.',
+    MEDIUM: 'Gracias por su propuesta. La compartiremos con el equipo de producto para evaluar su viabilidad e impacto.',
+    HIGH: 'Gracias por su propuesta. Dado su impacto, el equipo de producto la revisará con prioridad y podría contactarle para conocer más detalles.',
+    CRITICAL: 'Gracias por su propuesta. El equipo de producto la revisará con prioridad y le contactará para entender el caso de uso.',
   },
   SECURITY: {
-    LOW: 'Gracias por avisar. Revisaremos los registros de acceso.',
-    MEDIUM: 'Seguridad prioritaria. Comparte pruebas (capturas, logs) para.evaluar el daño.',
-    HIGH: 'AMENAZA ACTIVA: Aislamos sistemas afectados. No hagas clic en enlaces sospechosos.',
-    CRITICAL: 'EMERGENCIA DE SEGURIDAD: Equipo de respuesta inmediata activado. Apaga accesos no esenciales.'
-  }
+    LOW: 'Gracias por informarnos. El equipo de seguridad revisará su reporte.',
+    MEDIUM: 'Gracias por informarnos. El equipo de seguridad revisará su reporte; si tiene evidencia (capturas o registros), compártala sin incluir contraseñas.',
+    HIGH: 'Gracias por su reporte. Lo hemos escalado al equipo de seguridad para su revisión. No comparta contraseñas ni códigos con nadie mientras lo analizamos.',
+    CRITICAL: 'Su reporte fue escalado de inmediato al equipo de seguridad como posible incidente crítico. Por precaución, cambie su contraseña y no comparta datos sensibles.',
+  },
 };
 
-// Determina la categoría basada en palabras clave
-function detectCategory(text) {
-  const normalized = normalizeText(text);
-  const words = new Set(normalized.split(' '));
+// Calcula el puntaje de cada categoría y elige la ganadora.
+function detectCategory(normalized, words) {
+  const scores = Object.fromEntries(
+    Object.entries(KEYWORDS).map(([category, keywords]) => [
+      category,
+      Object.entries(keywords).reduce((sum, [key, weight]) => sum + (matches(normalized, words, key) ? weight : 0), 0),
+    ]),
+  );
 
-  let bestCategory = 'BUG';
-  let maxScore = 0;
+  const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  const [[top, topScore], [, secondScore]] = ranked;
 
-  for (const [category, keywords] of Object.entries(KEYWORDS)) {
-    let score = 0;
-    for (const [kw, weight] of Object.entries(keywords)) {
-      if (kw.includes(' ')) {
-        // Phrases
-        if (normalized.includes(kw)) score += weight * 2;
-      } else if (words.has(kw)) {
-        score += weight;
-      }
-    }
-    if (score > maxScore) {
-      maxScore = score;
-      bestCategory = category;
-    }
-  }
+  // Sin ninguna coincidencia: se asume BUG (lo más común en soporte) y se pide revisión humana.
+  if (topScore === 0) return { category: 'BUG', isAmbiguous: true, scores };
 
-  // Si no hubo coincidencias claras, default a BUG (requiere revisión humana)
-  if (maxScore === 0) return { category: 'BUG', isAmbiguous: true };
-  return { category: bestCategory, isAmbiguous: maxScore <= 2 };
+  const category = scores.SECURITY >= SECURITY_PRECEDENCE_SCORE ? 'SECURITY' : top;
+  const isAmbiguous = topScore < MIN_CONFIDENT_SCORE || (secondScore > 0 && topScore - secondScore <= 1);
+  return { category, isAmbiguous, scores };
 }
 
-// Determina la prioridad basada en el texto y categoría base
-function detectPriority(category, text) {
-  const normalized = normalizeText(text);
-  let priority = BASE_PRIORITY[category];
-
-  let upLevel = 0;
-  let downLevel = 0;
-
-  for (const [kw, delta] of Object.entries(UP_MODIFIERS)) {
-    if (normalized.includes(kw)) upLevel += delta;
-  }
-  for (const [kw, delta] of Object.entries(DOWN_MODIFIERS)) {
-    if (normalized.includes(kw)) downLevel -= delta;
+// Prioridad = base de la categoría + modificadores, limitada al rango LOW..CRITICAL.
+function detectPriority(category, normalized, words) {
+  if (category === 'SECURITY' && SECURITY_CRITICAL.some((k) => matches(normalized, words, k))) {
+    return 'CRITICAL';
   }
 
-  // Calcula índice de prioridad final
-  let priorityIndex = PRIORITIES.indexOf(priority) + upLevel + downLevel;
-
-  // CRITICAL para SECURITY con fuga/explotación activa o caída total
-  if (category === 'SECURITY') {
-    if (normalized.includes('explotación') || normalized.includes('fuga') || 
-        normalized.includes('caído') || normalized.includes('todos caídos')) {
-      return PRIORITIES[3]; // CRITICAL
+  let delta = 0;
+  let rest = ` ${normalized} `;
+  for (const [key, d] of Object.entries(DOWN_MODIFIERS)) {
+    if (matches(normalized, words, key)) {
+      delta += d; // d es negativo
+      rest = rest.replaceAll(` ${key} `, ' '); // "no es urgente" no debe contar además como "urgente"
     }
   }
+  const restWords = rest.trim().split(' ');
+  for (const [key, d] of Object.entries(UP_MODIFIERS)) if (matches(rest.trim(), restWords, key)) delta += d;
 
-  // Límites
-  if (priorityIndex < 0) priorityIndex = 0;
-  if (priorityIndex > 3) priorityIndex = 3;
-
-  return PRIORITIES[priorityIndex];
-}
-
-// Determina si requiere revisión humana
-function requiresReview(category, isAmbiguous) {
-  // Siempre true para SECURITY o si la clasificación es dudosa
-  return category === 'SECURITY' || isAmbiguous;
+  const min = category === 'SECURITY' ? PRIORITIES.indexOf('HIGH') : 0; // un incidente nunca baja de HIGH
+  const index = Math.min(PRIORITIES.length - 1, Math.max(min, PRIORITIES.indexOf(BASE_PRIORITY[category]) + delta));
+  return PRIORITIES[index];
 }
 
 export async function analyze(message) {
-  const { category, isAmbiguous } = detectCategory(message);
-  const priority = detectPriority(category, message);
-  const response = RESPONSES[category][priority];
-  const requiresHumanReview = requiresReview(category, isAmbiguous);
+  const normalized = normalizeText(message);
+  const words = normalized.split(' ');
 
-  return { category, priority, response, requiresHumanReview };
+  const { category, isAmbiguous } = detectCategory(normalized, words);
+  const priority = detectPriority(category, normalized, words);
+
+  return {
+    category,
+    priority,
+    response: RESPONSES[category][priority],
+    // Siempre revisión humana en seguridad o cuando la clasificación es dudosa.
+    requiresHumanReview: category === 'SECURITY' || isAmbiguous,
+  };
 }
