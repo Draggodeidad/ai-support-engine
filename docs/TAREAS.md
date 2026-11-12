@@ -43,3 +43,28 @@ Solo toca estos archivos para evitar conflictos: `src/engines/traditional/**`, `
 5. Commits pequeños, `git push -u origin feat/traditional-engine` y abre un **Pull Request a `main`**. Avisa cuando esté listo para hacer la comparativa juntos.
 
 Debes poder explicar tus reglas: deja un comentario breve arriba de cada diccionario/regla con su porqué.
+
+---
+
+## Tarea 2 para osbaldoXxC: evidencias de ejecución (después de abrir el PR del motor tradicional)
+
+Requisitos: `main` actualizado (ya trae el motor generativo) y un `.env` propio con tu propia `GEMINI_API_KEY` (gratis en https://aistudio.google.com/api-keys) **o** Ollama con `LLM_PROVIDER=ollama` y `ollama pull qwen2.5:3b`.
+
+```bash
+git checkout main && git pull
+git checkout -b feat/evidence
+cp .env.example .env   # pon tu key
+```
+
+Solo toca: `scripts/evidence.js`, `results/evidence/**`, `requests.http`, `docs/motor-tradicional.md`.
+
+1. **`scripts/evidence.js`** (añade el script `"evidence": "node --env-file-if-exists=.env scripts/evidence.js"` a `package.json`, es la única línea que tocas ahí):
+   - Hace peticiones HTTP reales con `fetch` a `http://localhost:${PORT}/api/analyze` (el servidor debe estar corriendo con `npm start`).
+   - Envía ~6 mensajes representativos (uno por categoría + uno adversarial + uno ambiguo) en **ambos** modos, más 4 casos de error: body vacío, `mode` inválido, JSON mal formado, mensaje de más de 2000 caracteres.
+   - Guarda cada petición/respuesta (fecha, request, status HTTP, body, tiempo en ms) en `results/evidence/evidence.json` y una versión legible en `results/evidence/evidence.md`.
+   - Entre llamadas generativas, pausa de ~4 s (límite del plan gratuito de Gemini).
+2. **`requests.http`** con los mismos ejemplos para la extensión REST Client de VS Code (sirve para la demo en vivo).
+3. **`docs/motor-tradicional.md`**: explicación breve de tus reglas (diccionarios, pesos, cómo se calcula la prioridad, por qué marcas revisión humana). Debe ser lo que dirías al defenderlo.
+4. Cuando tu motor esté en `main`, corre `npm start` en una terminal y `npm run evidence` en otra, y sube los resultados. PR a `main`.
+
+Al final hacemos juntos `npm run compare`, la tabla y la conclusión.
